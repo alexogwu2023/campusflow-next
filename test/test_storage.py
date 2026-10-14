@@ -17,8 +17,10 @@ def sample_ticket():
         "affected_users": 12,
         "priority": "critical",
         "status": "open",
-        "assigned_to": None
+        "assigned_to": None,
+        "notes": []
     }
+
 
 
 class TestLoadTickets(unittest.TestCase):
@@ -117,6 +119,64 @@ class TestLoadTickets(unittest.TestCase):
                     load_tickets(path)
 
 
+class TestStorageValidation(unittest.TestCase):
+
+    def test_duplicate_ticket_ids_raise_storage_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+
+            first_ticket = sample_ticket()
+            second_ticket = sample_ticket()
+
+            tickets = [first_ticket, second_ticket]
+
+            path.write_text(
+                json.dumps(tickets),
+                encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                StorageError, "Duplicate ticket ID"
+            ):
+                load_tickets(path)
+
+    def test_invalid_ticket_status_raises_storage_error(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+            ticket = sample_ticket()
+            ticket["status"] = "flying"
+
+            path.write_text(
+                json.dumps([ticket]),
+                encoding="utf-8"
+            )
+
+            with self.assertRaisesRegex(
+                StorageError, "Invalid ticket status"
+            ):
+                load_tickets(path)
+
+    def test_valid_ticket_statuses_are_accepted(self):
+        valid_statuses = ["open", "in_progress", "resolved"]
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+
+            for status in valid_statuses:
+                ticket = sample_ticket()
+                ticket["status"] = status
+
+                path.write_text(
+                    json.dumps([ticket]),
+                    encoding="utf-8"
+                )
+
+                result = load_tickets(path)
+
+                self.assertEqual(result[0]["status"], status)
+
+
+
 class TestSaveTickets(unittest.TestCase):
 
     def test_saves_tickets_successfully(self):
@@ -189,6 +249,84 @@ class TestSaveTickets(unittest.TestCase):
 
             self.assertTrue(path.exists())
             self.assertFalse(temp_path.exists())
+
+    
+    def test_saves_and_loads_ticket_notes(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+            ticket = sample_ticket()
+            ticket["notes"] = [
+                {
+                    "note_id": "N001",
+                    "author": "Alex",
+                    "message": "Router needs restarting"
+                }
+            ]
+
+            save_tickets([ticket], path)
+            loaded_tickets = load_tickets(path)
+
+            self.assertEqual(loaded_tickets[0]["notes"], ticket["notes"])
+
+    def test_preserves_multiple_notes_and_their_order(self):
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+            ticket = sample_ticket()
+            ticket["notes"] = [
+                {
+                    "note_id": "N001",
+                    "author": "Alex",
+                    "message": "Router needs restarting"
+                },
+                {
+                    "note_id": "N002",
+                    "author": "Grace",
+                    "message": "The router has been checked"
+                }
+            ]
+
+            save_tickets([ticket], path)
+            loaded_tickets = load_tickets(path)
+
+            self.assertEqual(
+                loaded_tickets[0]["notes"],
+                ticket["notes"]
+            )
+
+    def test_next_note_id_continues_after_loading(self):
+        from campusflow.tickets import add_note
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = Path(temp_dir) / "tickets.json"
+            ticket = sample_ticket()
+            ticket["notes"] = [
+                {
+                    "note_id": "N001",
+                    "author": "Alex",
+                    "message": "Router needs restarting"
+                },
+                {
+                    "note_id": "N002",
+                    "author": "Grace",
+                    "message": "The router has been checked"
+                }
+            ]
+
+            save_tickets([ticket], path)
+            loaded_tickets = load_tickets(path)
+
+            add_note(
+                loaded_tickets,
+                "T001",
+                "John",
+                "The connection works"
+            )
+
+            self.assertEqual(
+                loaded_tickets[0]["notes"][-1]["note_id"],
+                "N003"
+            )
+
 
 
 if __name__ == "__main__":

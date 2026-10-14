@@ -41,9 +41,11 @@ class TestCheckCategory(unittest.TestCase):
         self.assertEqual(check_category("  network "), "Network")
         self.assertEqual(check_category("SOFTWARE"), "Software")
 
+    
     def test_rejects_non_text(self):
-        with self.assertRaisesRegex(ValueError, "category must be text"):
-            check_category(123)
+        with self.assertRaisesRegex(ValueError, "Category must be text"):
+            check_category(None)
+
 
     def test_rejects_invalid_category(self):
         with self.assertRaisesRegex(ValueError, "Category must be one of"):
@@ -66,7 +68,9 @@ class TestCheckUrgency(unittest.TestCase):
             check_urgency(123)
 
     def test_rejects_invalid_urgency(self):
-        with self.assertRaisesRegex(ValueError, "Urgency must be low, medium or high"):
+        with self.assertRaisesRegex(
+            ValueError, "Urgency must be low, medium or high"
+        ):
             check_urgency("urgent")
 
 
@@ -137,7 +141,7 @@ class TestNextId(unittest.TestCase):
         tickets = [
             {"id": "T001"},
             {"id": "T002"},
-            {"id": "T003"}
+            {"id": "T003"},
         ]
         self.assertEqual(next_id(tickets), "T004")
 
@@ -145,7 +149,7 @@ class TestNextId(unittest.TestCase):
         tickets = [
             {"id": "T002"},
             {"id": "T010"},
-            {"id": "T005"}
+            {"id": "T005"},
         ]
         self.assertEqual(next_id(tickets), "T011")
 
@@ -155,13 +159,24 @@ class TestCreateTicket(unittest.TestCase):
     def setUp(self):
         self.tickets = []
 
+    def test_new_ticket_starts_with_empty_notes(self):
+        ticket = create_ticket(
+            self.tickets,
+            "WiFi is down",
+            "Network",
+            "high",
+            5,
+        )
+
+        self.assertEqual(ticket["notes"], [])
+
     def test_creates_ticket_successfully(self):
         ticket = create_ticket(
             self.tickets,
             " Network is down ",
             "network",
             "HIGH",
-            "12"
+            "12",
         )
 
         self.assertEqual(ticket, {
@@ -172,7 +187,8 @@ class TestCreateTicket(unittest.TestCase):
             "affected_users": 12,
             "priority": "critical",
             "status": "open",
-            "assigned_to": None
+            "assigned_to": None,
+            "notes": [],
         })
 
         self.assertEqual(len(self.tickets), 1)
@@ -230,12 +246,12 @@ class TestFindTicket(unittest.TestCase):
         self.tickets = [
             {
                 "id": "T001",
-                "title": "Network issue"
+                "title": "Network issue",
             },
             {
                 "id": "T002",
-                "title": "Printer issue"
-            }
+                "title": "Printer issue",
+            },
         ]
 
     def test_finds_existing_ticket(self):
@@ -253,6 +269,97 @@ class TestFindTicket(unittest.TestCase):
     def test_rejects_missing_ticket(self):
         with self.assertRaisesRegex(ValueError, "Ticket not found"):
             find_ticket(self.tickets, "T999")
+
+
+
+class TestAddNote(unittest.TestCase):
+
+    def setUp(self):
+        self.tickets = []
+        self.ticket = create_ticket(
+            self.tickets,
+            "WiFi is down",
+            "Network",
+            "high",
+            5
+        )
+
+    def test_add_note_successfully(self):
+        from campusflow.tickets import add_note
+
+        note = add_note(
+            self.tickets,
+            self.ticket["id"],
+            "Alex",
+            "Router needs restarting"
+        )
+
+        self.assertEqual(note["note_id"], "N001")
+        self.assertEqual(note["author"], "Alex")
+        self.assertEqual(note["message"], "Router needs restarting")
+        self.assertEqual(len(self.ticket["notes"]), 1)
+
+    def test_note_author_cannot_be_blank(self):
+        from campusflow.tickets import add_note
+
+        with self.assertRaises(ValueError):
+            add_note(
+                self.tickets,
+                self.ticket["id"],
+                "   ",
+                "Router needs restarting"
+            )
+
+        self.assertEqual(self.ticket["notes"], [])
+
+    def test_note_message_must_have_at_least_five_characters(self):
+        from campusflow.tickets import add_note
+
+        with self.assertRaises(ValueError):
+            add_note(
+                self.tickets,
+                self.ticket["id"],
+                "Alex",
+                "Hey"
+            )
+
+        self.assertEqual(self.ticket["notes"], [])
+
+    def test_resolved_ticket_rejects_notes(self):
+        from campusflow.tickets import add_note
+
+        self.ticket["status"] = "resolved"
+
+        with self.assertRaises(ValueError):
+            add_note(
+                self.tickets,
+                self.ticket["id"],
+                "Alex",
+                "Router needs restarting"
+            )
+
+        self.assertEqual(self.ticket["notes"], [])
+
+    def test_note_ids_increase_sequentially(self):
+        from campusflow.tickets import add_note
+
+        first = add_note(
+            self.tickets,
+            self.ticket["id"],
+            "Alex",
+            "Router needs restarting"
+        )
+
+        second = add_note(
+            self.tickets,
+            self.ticket["id"],
+            "Grace",
+            "The router has been checked"
+        )
+
+        self.assertEqual(first["note_id"], "N001")
+        self.assertEqual(second["note_id"], "N002")
+
 
 
 if __name__ == "__main__":
