@@ -1,84 +1,89 @@
-import re
+from campusflow.tickets import find_ticket, id_number
 
 VALID_STATUSES = {"open", "in_progress", "resolved"}
-STATUS_ORDER = {"open": 0, "in_progress": 1, "resolved": 2}
-PRIORITY_WEIGHTS = {"critical": 0, "high": 1, "medium": 2, "low": 3}
 
+ALLOWED_TRANSITIONS = {
+    "open": {"in_progress"},
+    "in_progress": {"resolved"},
+    "resolved": {"open"},
+}
 
-def _find_ticket(tickets, ticket_id):
-    for ticket in tickets:
-        if ticket.get("id") == ticket_id:
-            return ticket
-    return None
-
-
-def _parse_ticket_number(ticket_id):
-    """Extract numeric value for correct sorting (e.g., T2 before T10)."""
-    match = re.search(r'\d+', str(ticket_id))
-    return int(match.group()) if match else 0
+PRIORITY_RANK = {
+    "critical": 0,
+    "high": 1,
+    "medium": 2,
+    "low": 3,
+}
 
 
 def assign_ticket(tickets, ticket_id, staff_name):
-    """Assign ticket to staff. Rejects blank names or invalid IDs."""
-    if not staff_name or not str(staff_name).strip():
+    """Assign an open or in-progress ticket to a staff member."""
+    if not isinstance(staff_name, str) or not staff_name.strip():
         raise ValueError("Staff name cannot be blank.")
-    
-    ticket = _find_ticket(tickets, ticket_id)
-    if not ticket:
-        raise ValueError(f"Ticket ID '{ticket_id}' not found.")
-    
-    ticket["assignee"] = str(staff_name).strip()
+
+    ticket = find_ticket(tickets, ticket_id)
+
+    if ticket.get("status") == "resolved":
+        raise ValueError(
+            "A resolved ticket must be reopened before reassignment."
+        )
+
+    ticket["assigned_to"] = staff_name.strip()
     return ticket
 
 
 def update_status(tickets, ticket_id, new_status):
-    """Update status sequentially (open -> in_progress -> resolved) or reopen."""
+    """Update status using the allowed transitions."""
+    if not isinstance(new_status, str):
+        raise ValueError("Status must be text.")
+
+    new_status = new_status.strip().lower()
+
     if new_status not in VALID_STATUSES:
-        raise ValueError(f"Invalid status '{new_status}'. Must be one of {VALID_STATUSES}.")
-    
-    ticket = _find_ticket(tickets, ticket_id)
-    if not ticket:
-        raise ValueError(f"Ticket ID '{ticket_id}' not found.")
-    
-    current_status = ticket.get("status", "open")
-    
-    # Resolved tickets must be reopened first
-    if current_status == "resolved":
-        if new_status != "open":
-            raise ValueError("A resolved ticket cannot be modified unless it is reopened first.")
-        ticket["status"] = "open"
-        return ticket
-    
-    # Unassigned tickets cannot start progress
+        raise ValueError(
+            "Status must be open, in_progress or resolved."
+        )
+
+    ticket = find_ticket(tickets, ticket_id)
+    current_status = ticket.get("status")
+
+    if current_status not in VALID_STATUSES:
+        raise ValueError("Ticket has an invalid current status.")
+
+    if new_status == current_status:
+        raise ValueError(f"Ticket is already {current_status}.")
+
+    if new_status not in ALLOWED_TRANSITIONS[current_status]:
+        raise ValueError(
+            f"Cannot move from {current_status} to {new_status}."
+        )
+
+    # An unassigned ticket cannot move into progress.
     if new_status == "in_progress":
-        assignee = ticket.get("assignee")
-        if not assignee or not str(assignee).strip():
-            raise ValueError("An unassigned ticket cannot be moved to 'in_progress'.")
-    
-    # Enforce sequential step transitions
-    current_idx = STATUS_ORDER.get(current_status, 0)
-    new_idx = STATUS_ORDER.get(new_status, 0)
-    
-    if new_idx < current_idx:
-        raise ValueError(f"Cannot move status backwards from '{current_status}' to '{new_status}'.")
-    if new_idx > current_idx + 1:
-        raise ValueError(f"Cannot skip steps from '{current_status}' to '{new_status}'.")
-    
+        assigned_to = ticket.get("assigned_to")
+
+        if not isinstance(assigned_to, str) or not assigned_to.strip():
+            raise ValueError(
+                "An unassigned ticket cannot move to in_progress."
+            )
+
     ticket["status"] = new_status
     return ticket
 
 
 def get_work_queue(tickets):
-    """Return unresolved tickets (open/in_progress) sorted by priority then ticket ID."""
-    unresolved = [
-        t for t in tickets 
-        if t.get("status") in {"open", "in_progress"}
+    """Return only open tickets, sorted by priority and ticket ID."""
+    open_tickets = [
+        ticket
+        for ticket in tickets
+        if ticket.get("status") == "open"
     ]
-    
-    def sort_key(t):
-        priority = str(t.get("priority", "low")).lower()
-        p_weight = PRIORITY_WEIGHTS.get(priority, 4)
-        num = _parse_ticket_number(t.get("id", ""))
-        return (p_weight, num)
-    
-    return sorted(unresolved, key=sort_key)
+
+    def sort_key(ticket):
+        priority = ticket["priority"].lower()
+        priority_rank = PRIORITY_RANK[priority]
+        ticket_number = id_number(ticket["id"])
+
+        return priority_rank, ticket_number
+
+    return sorted(open_tickets, key=sort_key)
